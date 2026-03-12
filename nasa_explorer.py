@@ -249,8 +249,10 @@ if run_search:
                 st.markdown("#### Links to MAST Portal")
                 for _, row in df_jwst.head(10).iterrows():
                     oid = row["obs_id"]
-                    url = f"https://mast.stsci.edu/portal/Mashup/Clients/Mast/Portal.html?searchQuery={oid}"
-                    st.markdown(f"- [{oid}]({url})")
+                    target = row.get("target_name", "")
+                    # Direct observation detail page — obs_id as a filter, not a position query
+                    url = f"https://mast.stsci.edu/search/ui/#/jwst?obsid={oid}"
+                    st.markdown(f"- [{target} — {oid}]({url})")
 
     # ── TESS tab ──────────────────────────────────────────────────────────────
     if "TESS" in missions:
