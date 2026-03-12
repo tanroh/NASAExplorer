@@ -56,20 +56,39 @@ with st.sidebar:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+# Solar system bodies astropy can resolve via ephemeris
+SOLAR_SYSTEM_BODIES = {
+    "mercury", "venus", "mars", "jupiter", "saturn", "uranus", "neptune",
+    "pluto", "moon", "sun", "io", "europa", "ganymede", "callisto",
+    "titan", "enceladus", "triton", "ceres", "eris",
+}
+
 @st.cache_data(show_spinner=False)
 def resolve_target(target_str: str, mode: str):
     """Return a SkyCoord from a name or 'ra dec' string."""
     if mode == "Object name":
-        # Try astropy name resolution first (uses CDS Sesame — fast, no SIMBAD quirks)
+        # Check for solar system bodies first — SIMBAD won't have these
+        if target_str.strip().lower() in SOLAR_SYSTEM_BODIES:
+            from astropy.coordinates import get_body_barycentric
+            from astropy.time import Time
+            from astropy.coordinates import solar_system_ephemeris, ICRS
+            import astropy.coordinates as coord_module
+            with solar_system_ephemeris.set("builtin"):
+                body = coord_module.get_body(target_str.strip().lower(), Time.now())
+            coord = SkyCoord(ra=body.ra, dec=body.dec, frame="icrs")
+            return coord
+
+        # Try CDS Sesame (handles stars, galaxies, nebulae, exoplanet hosts)
         try:
             coord = SkyCoord.from_name(target_str)
             return coord
         except Exception:
             pass
+
         # Fallback: SIMBAD directly (column names vary by astroquery version)
         from astroquery.simbad import Simbad
         result = Simbad.query_object(target_str)
-        if result is None:
+        if result is None or len(result) == 0:
             raise ValueError(
                 f"Could not resolve '{target_str}'. "
                 "Try an exact catalogue name (e.g. 'NGC 628', 'TRAPPIST-1') "
