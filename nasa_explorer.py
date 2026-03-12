@@ -123,9 +123,15 @@ def query_mast(ra_deg: float, dec_deg: float, radius_arcmin: float,
     keep = [c for c in want if c in df.columns]
     df = df[keep].head(max_rows)
 
-    # Human-readable date
+    # Human-readable date (t_min is MJD — use astropy Time to avoid overflow)
     if "t_min" in df.columns:
-        df["obs_date"] = pd.to_datetime(df["t_min"], origin="julian", unit="D", errors="coerce").dt.date
+        from astropy.time import Time
+        def mjd_to_date(val):
+            try:
+                return Time(float(val), format="mjd").to_datetime().date()
+            except Exception:
+                return None
+        df["obs_date"] = df["t_min"].apply(mjd_to_date)
 
     return df
 
