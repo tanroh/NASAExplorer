@@ -244,15 +244,21 @@ if run_search:
                 if shown == 0:
                     st.info("Preview images not available for these observations.")
 
-            # Links to MAST portal
+            # MAST has no reliable deep link by obs_id — link to JWST Mission Search
+            # by target name and show obs_id as copyable text for manual filtering
             if "obs_id" in df_jwst.columns:
-                st.markdown("#### Links to MAST Portal")
+                import urllib.parse
+                st.markdown("#### View on MAST")
+                st.caption(
+                    "Click a target name to open MAST search for that target. "
+                    "Copy the Obs ID and paste into the Obs ID field on MAST to go directly to that observation."
+                )
                 for _, row in df_jwst.head(10).iterrows():
                     oid = row["obs_id"]
-                    target = row.get("target_name", "")
-                    # Direct observation detail page — obs_id as a filter, not a position query
-                    url = f"https://mast.stsci.edu/search/ui/#/jwst?obsid={oid}"
-                    st.markdown(f"- [{target} — {oid}]({url})")
+                    target = row.get("target_name", "").strip()
+                    filters = row.get("filters", "")
+                    search_url = "https://mast.stsci.edu/search/ui/#/jwst?target=" + urllib.parse.quote(target)
+                    st.markdown(f"- [**{target}**]({search_url}) &nbsp;`{filters}` &nbsp;— obs id: `{oid}`")
 
     # ── TESS tab ──────────────────────────────────────────────────────────────
     if "TESS" in missions:
