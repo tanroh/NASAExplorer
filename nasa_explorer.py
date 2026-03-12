@@ -148,15 +148,23 @@ def fetch_preview(url: str):
 
 
 @st.cache_data(show_spinner=False)
-def fetch_lightcurve(target_name: str):
-    """Search for and download a TESS light curve via lightkurve."""
+def search_lightcurve_meta(target_name: str) -> pd.DataFrame:
+    """Return TESS light curve search results as a plain dataframe (cacheable)."""
     search = lk.search_lightcurve(target_name, mission="TESS", author="SPOC")
     if len(search) == 0:
         search = lk.search_lightcurve(target_name, mission="TESS")
     if len(search) == 0:
-        return None, None
-    lc = search[0].download()
-    return lc, search.table.to_pandas()
+        return pd.DataFrame()
+    return search.table.to_pandas()
+
+def fetch_lightcurve(target_name: str):
+    """Download the first available TESS light curve (not cached — lightkurve objects are not picklable)."""
+    search = lk.search_lightcurve(target_name, mission="TESS", author="SPOC")
+    if len(search) == 0:
+        search = lk.search_lightcurve(target_name, mission="TESS")
+    if len(search) == 0:
+        return None
+    return search[0].download()
 
 
 # ── Main app ──────────────────────────────────────────────────────────────────
@@ -247,17 +255,25 @@ if run_search:
 
         # Light curve
         st.markdown("#### Light Curve (TESS via lightkurve)")
-        with st.spinner("Fetching light curve…"):
+        with st.spinner("Searching for light curves…"):
             try:
-                lc, lc_meta = fetch_lightcurve(target_input.strip())
+                lc_meta = search_lightcurve_meta(target_input.strip())
             except Exception as e:
-                lc, lc_meta = None, None
-                st.warning(f"lightkurve error: {e}")
+                lc_meta = pd.DataFrame()
+                st.warning(f"lightkurve search error: {e}")
+
+        if not lc_meta.empty:
+            with st.expander("Light curve search results"):
+                st.dataframe(lc_meta, use_container_width=True, hide_index=True)
+
+        lc = None
+        with st.spinner("Downloading light curve…"):
+            try:
+                lc = fetch_lightcurve(target_input.strip())
+            except Exception as e:
+                st.warning(f"lightkurve download error: {e}")
 
         if lc is not None:
-            if lc_meta is not None:
-                with st.expander("Light curve search results"):
-                    st.dataframe(lc_meta, use_container_width=True, hide_index=True)
 
             fig, ax = plt.subplots(figsize=(10, 3))
             lc.scatter(ax=ax, s=1, c="steelblue")
