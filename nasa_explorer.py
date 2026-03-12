@@ -60,13 +60,34 @@ with st.sidebar:
 def resolve_target(target_str: str, mode: str):
     """Return a SkyCoord from a name or 'ra dec' string."""
     if mode == "Object name":
+        # Try astropy name resolution first (uses CDS Sesame — fast, no SIMBAD quirks)
+        try:
+            coord = SkyCoord.from_name(target_str)
+            return coord
+        except Exception:
+            pass
+        # Fallback: SIMBAD directly (column names vary by astroquery version)
         from astroquery.simbad import Simbad
         result = Simbad.query_object(target_str)
         if result is None:
-            raise ValueError(f"Could not resolve '{target_str}' via SIMBAD.")
-        ra  = result["RA"][0]
-        dec = result["DEC"][0]
-        coord = SkyCoord(ra=ra, dec=dec, unit=(u.hourangle, u.deg), frame="icrs")
+            raise ValueError(
+                f"Could not resolve '{target_str}'. "
+                "Try an exact catalogue name (e.g. 'NGC 628', 'TRAPPIST-1') "
+                "or switch to RA/Dec mode."
+            )
+        # Column names differ between astroquery versions: try both cases
+        cols = {c.lower(): c for c in result.colnames}
+        ra_col  = cols.get("ra",  cols.get("ra_d",  None))
+        dec_col = cols.get("dec", cols.get("dec_d", None))
+        if ra_col is None or dec_col is None:
+            raise ValueError(f"Unexpected SIMBAD columns: {result.colnames}")
+        ra_val  = result[ra_col][0]
+        dec_val = result[dec_col][0]
+        # SIMBAD returns sexagesimal strings for RA/Dec; degree columns end in _d
+        if "d" in ra_col.lower():
+            coord = SkyCoord(ra=float(ra_val), dec=float(dec_val), unit=u.deg, frame="icrs")
+        else:
+            coord = SkyCoord(ra=ra_val, dec=dec_val, unit=(u.hourangle, u.deg), frame="icrs")
     else:
         parts = target_str.split()
         if len(parts) != 2:
@@ -79,12 +100,15 @@ def resolve_target(target_str: str, mode: str):
 def query_mast(ra_deg: float, dec_deg: float, radius_arcmin: float,
                mission: str, max_rows: int) -> pd.DataFrame:
     """Query MAST for observations near a coordinate."""
-    obs = Observations.query_criteria(
-        s_ra=[ra_deg - radius_arcmin / 60, ra_deg + radius_arcmin / 60],
-        s_dec=[dec_deg - radius_arcmin / 60, dec_deg + radius_arcmin / 60],
-        obs_collection=mission,
-    )
+    coord = SkyCoord(ra=ra_deg, dec=dec_deg, unit=u.deg, frame="icrs")
+    radius = u.Quantity(radius_arcmin, u.arcmin)
+    obs = Observations.query_region(coord, radius=radius)
     if obs is None or len(obs) == 0:
+        return pd.DataFrame()
+    # Filter to the requested mission
+    mask = [str(c).upper() == mission.upper() for c in obs["obs_collection"]]
+    obs = obs[mask]
+    if len(obs) == 0:
         return pd.DataFrame()
 
     df = obs.to_pandas()
