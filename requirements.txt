@@ -1,0 +1,6 @@
+astroquery
+astropy
+lightkurve
+Pillow
+requests
+matplotlib
