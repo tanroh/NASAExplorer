@@ -27,8 +27,10 @@ st.title("🔭 NASA Astrophysics Explorer")
 st.caption("Browse JWST and TESS observations via the MAST archive")
 
 # ── Session state — lets featured target buttons pre-fill the search box ─────
-if "prefill_target" not in st.session_state:
-    st.session_state.prefill_target = "NGC 628"
+# Using the widget key directly in session_state is the reliable way to set
+# a text_input value programmatically after first render
+if "target_input_box" not in st.session_state:
+    st.session_state.target_input_box = "NGC 628"
 
 # ── Sidebar controls ─────────────────────────────────────────────────────────
 with st.sidebar:
@@ -36,7 +38,6 @@ with st.sidebar:
 
     target_input = st.text_input(
         "Object name or RA Dec",
-        value=st.session_state.prefill_target,
         help="Examples:  NGC 628  |  M31  |  261.7 -73.5  |  Trappist-1",
         key="target_input_box",
     )
@@ -68,30 +69,69 @@ SOLAR_SYSTEM_BODIES = {
     "titan", "enceladus", "triton", "ceres", "eris",
 }
 
+# Curated fallback list used when live fetch fails or is slow
+FALLBACK_TARGETS = [
+    "WASP-76", "TRAPPIST-1", "HD 209458", "GJ 1214", "TOI-700",
+    "NGC 628", "NGC 1300", "M16", "M57", "Stephan's Quintet",
+    "Jupiter", "Saturn", "Mars", "Europa", "Titan",
+    "Sgr A*", "Crab Nebula", "Cartwheel Galaxy", "Pillars of Creation", "LMC",
+]
+
 @st.cache_data(show_spinner=False, ttl=3600)
 def fetch_recent_targets(n: int = 20) -> list[str]:
-    """Fetch recently observed unique target names from JWST and TESS via MAST."""
+    """Fetch recently observed resolvable target names from JWST and TESS via MAST.
+    Limits the query to the past 90 days to keep it fast, and filters out
+    internal programme names that won't resolve via SIMBAD/Sesame."""
+    import re as _re
+    from astropy.time import Time
+
+    # Patterns that indicate non-resolvable internal names
+    BAD_PATTERNS = [
+        r"^J\d{6}",          # coordinate-based: J033149...
+        r"^\d+$",             # pure numbers
+        r"-FIELD$",           # e.g. NGC628-FIELD
+        r"-CENTER$",
+        r"-OFFSET",
+        r"^BIAS",
+        r"^DARK",
+        r"^FLAT",
+        r"^CALIBRATION",
+        r"_[A-Z]{3}_",        # instrument codes embedded in name
+    ]
+    bad_re = _re.compile("|".join(BAD_PATTERNS), _re.IGNORECASE)
+
     try:
+        # Only query last 90 days — much faster than full catalogue
+        t_now = Time.now().mjd
+        t_90d = t_now - 90
+
         results = []
         for mission in ["JWST", "TESS"]:
             obs = Observations.query_criteria(
                 obs_collection=mission,
                 dataproduct_type="image",
+                t_min=[t_90d, t_now],
             )
+            if obs is None or len(obs) == 0:
+                continue
             df = obs.to_pandas()
-            if "t_min" in df.columns and "target_name" in df.columns:
-                df = df[df["target_name"].notna()]
-                df = df[~df["target_name"].str.strip().str.upper().isin(
-                    ["", "UNKNOWN", "NULL", "NONE"]
-                )]
-                # Sort by most recent and take top targets
-                df = df.sort_values("t_min", ascending=False)
-                results.append(df["target_name"].str.strip())
+            if "t_min" not in df.columns or "target_name" not in df.columns:
+                continue
+            df = df[df["target_name"].notna()]
+            df = df[~df["target_name"].str.strip().str.upper().isin(
+                ["", "UNKNOWN", "NULL", "NONE"]
+            )]
+            # Filter out internal programme names
+            df = df[~df["target_name"].str.strip().apply(
+                lambda x: bool(bad_re.search(x))
+            )]
+            df = df.sort_values("t_min", ascending=False)
+            results.append(df["target_name"].str.strip())
 
         if not results:
-            return []
+            return FALLBACK_TARGETS[:n]
 
-        # Combine, deduplicate preserving order, clean up
+        # Combine, deduplicate preserving recency order
         seen = set()
         combined = []
         for series in results:
@@ -105,9 +145,15 @@ def fetch_recent_targets(n: int = 20) -> list[str]:
             if len(combined) >= n:
                 break
 
+        # Top up with fallbacks if live list is short
+        for name in FALLBACK_TARGETS:
+            if name.upper() not in seen and len(combined) < n:
+                combined.append(name)
+
         return combined[:n]
+
     except Exception:
-        return []
+        return FALLBACK_TARGETS[:n]
 
 
 @st.cache_data(show_spinner=False)
@@ -353,7 +399,7 @@ with st.sidebar:
         cols = st.columns(2)
         for i, name in enumerate(recent):
             if cols[i % 2].button(name, key=f"ft_{i}", use_container_width=True):
-                st.session_state.prefill_target = name
+                st.session_state.target_input_box = name
                 st.rerun()
     else:
         st.caption("Could not load recent targets.")
