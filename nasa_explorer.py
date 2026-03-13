@@ -270,16 +270,10 @@ if run_search:
                             f"&obs_id={obs_num}"
                             "&useStore=false"
                         )
-                        form_url = (
-                            "https://mast.stsci.edu/search/ui/#/jwst"
-                            f"?target_name={target_enc}"
-                            f"&program_id={prog_id}"
-                            f"&obs_id={obs_num}"
-                        )
                         st.markdown(
                             f"- **{target}** `{filters}` "
                             f"Program **{prog_id}** Obs **{obs_num}** "
-                            f"→ [Results]({results_url}) · [Search form]({form_url})"
+                            f"→ [Results]({results_url})"
                         )
                     else:
                         # Fallback for non-standard obs_id formats
