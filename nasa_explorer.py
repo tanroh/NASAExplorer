@@ -75,84 +75,31 @@ FALLBACK_TARGETS = [
     "Sgr A*", "Crab Nebula", "Cartwheel Galaxy", "Pillars of Creation", "LMC",
 ]
 
-@st.cache_data(show_spinner=False, ttl=3600)
-def fetch_recent_targets(n: int = 20) -> list[str]:
-    """Fetch recently observed resolvable target names from JWST and TESS via MAST.
-    Limits the query to the past 90 days to keep it fast, and filters out
-    internal programme names that won't resolve via SIMBAD/Sesame."""
-    import re as _re
-    from astropy.time import Time
-
-    # Patterns that indicate non-resolvable internal names
-    BAD_PATTERNS = [
-        r"^J\d{6}",          # coordinate-based: J033149...
-        r"^\d+$",             # pure numbers
-        r"-FIELD$",           # e.g. NGC628-FIELD
-        r"-CENTER$",
-        r"-OFFSET",
-        r"^BIAS",
-        r"^DARK",
-        r"^FLAT",
-        r"^CALIBRATION",
-        r"_[A-Z]{3}_",        # instrument codes embedded in name
-    ]
-    bad_re = _re.compile("|".join(BAD_PATTERNS), _re.IGNORECASE)
-
-    try:
-        # Only query last 90 days — much faster than full catalogue
-        t_now = Time.now().mjd
-        t_90d = t_now - 90
-
-        results = []
-        for mission in ["JWST", "TESS"]:
-            obs = Observations.query_criteria(
-                obs_collection=mission,
-                dataproduct_type="image",
-                t_min=[t_90d, t_now],
-            )
-            if obs is None or len(obs) == 0:
-                continue
-            df = obs.to_pandas()
-            if "t_min" not in df.columns or "target_name" not in df.columns:
-                continue
-            df = df[df["target_name"].notna()]
-            df = df[~df["target_name"].str.strip().str.upper().isin(
-                ["", "UNKNOWN", "NULL", "NONE"]
-            )]
-            # Filter out internal programme names
-            df = df[~df["target_name"].str.strip().apply(
-                lambda x: bool(bad_re.search(x))
-            )]
-            df = df.sort_values("t_min", ascending=False)
-            results.append(df["target_name"].str.strip())
-
-        if not results:
-            return FALLBACK_TARGETS[:n]
-
-        # Combine, deduplicate preserving recency order
-        seen = set()
-        combined = []
-        for series in results:
-            for name in series:
-                key = name.upper()
-                if key not in seen:
-                    seen.add(key)
-                    combined.append(name)
-                if len(combined) >= n:
-                    break
-            if len(combined) >= n:
-                break
-
-        # Top up with fallbacks if live list is short
-        for name in FALLBACK_TARGETS:
-            if name.upper() not in seen and len(combined) < n:
-                combined.append(name)
-
-        return combined[:n]
-
-    except Exception:
-        return FALLBACK_TARGETS[:n]
-
+FEATURED_TARGETS = [
+    # Exoplanet hosts — good for timeline crossmatch
+    ("WASP-76",      "Hot Jupiter, JWST atmosphere"),
+    ("WASP-39",      "Hot Jupiter, JWST benchmark"),
+    ("TRAPPIST-1",   "7 rocky planets"),
+    ("HD 209458",    "First transiting exoplanet"),
+    ("GJ 1214",      "Super-Earth / water world"),
+    ("TOI-700",      "Habitable zone Earth-size"),
+    ("LHS 1140",     "Rocky super-Earth"),
+    ("K2-18",        "Sub-Neptune, possible ocean"),
+    # Solar system
+    ("Jupiter",      "Gas giant"),
+    ("Saturn",       "Ringed planet"),
+    ("Mars",         "Red planet"),
+    ("Europa",       "Icy moon"),
+    # Deep sky — good for JWST imaging
+    ("NGC 628",      "Spiral galaxy, JWST flagship"),
+    ("Crab Nebula",  "Supernova remnant"),
+    ("M16",          "Pillars of Creation"),
+    ("NGC 3132",     "Southern Ring Nebula"),
+    ("Cartwheel Galaxy", "Ring galaxy, JWST"),
+    ("NGC 1300",     "Barred spiral galaxy"),
+    ("Stephan's Quintet", "Galaxy group, JWST"),
+    ("Sgr A*",       "Milky Way black hole"),
+]
 
 @st.cache_data(show_spinner=False)
 def resolve_target(target_str: str, mode: str):
@@ -387,20 +334,15 @@ def build_timeline(target: str, df_jwst: pd.DataFrame, df_tess: pd.DataFrame,
     return fig
 
 
-# ── Featured targets (sidebar, rendered after helpers are defined) ────────────
+# ── Featured targets (sidebar) ───────────────────────────────────────────────
 with st.sidebar:
     st.divider()
-    st.markdown("**Recent targets**")
-    with st.spinner("Loading…"):
-        recent = fetch_recent_targets(20)
-    if recent:
-        cols = st.columns(2)
-        for i, name in enumerate(recent):
-            if cols[i % 2].button(name, key=f"ft_{i}", use_container_width=True):
-                st.session_state.prefill_target = name
-                st.rerun()
-    else:
-        st.caption("Could not load recent targets.")
+    st.markdown("**Featured targets**")
+    cols = st.columns(2)
+    for i, (name, desc) in enumerate(FEATURED_TARGETS):
+        if cols[i % 2].button(name, key=f"ft_{i}", help=desc, use_container_width=True):
+            st.session_state.prefill_target = name
+            st.rerun()
 
 # ── Main app ──────────────────────────────────────────────────────────────────
 
