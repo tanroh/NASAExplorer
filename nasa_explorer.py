@@ -60,6 +60,19 @@ with st.sidebar:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+import time as _time
+
+def _with_retry(fn, retries=3, delay=2):
+    """Call fn(), retrying on ConnectionError up to `retries` times."""
+    for attempt in range(retries):
+        try:
+            return fn()
+        except (ConnectionError, OSError) as e:
+            if attempt < retries - 1:
+                _time.sleep(delay * (attempt + 1))
+            else:
+                raise e
+
 # Solar system bodies astropy can resolve via ephemeris
 SOLAR_SYSTEM_BODIES = {
     "mercury", "venus", "mars", "jupiter", "saturn", "uranus", "neptune",
@@ -118,14 +131,14 @@ def resolve_target(target_str: str, mode: str):
 
         # Try CDS Sesame (handles stars, galaxies, nebulae, exoplanet hosts)
         try:
-            coord = SkyCoord.from_name(target_str)
+            coord = _with_retry(lambda: SkyCoord.from_name(target_str))
             return coord
         except Exception:
             pass
 
         # Fallback: SIMBAD directly (column names vary by astroquery version)
         from astroquery.simbad import Simbad
-        result = Simbad.query_object(target_str)
+        result = _with_retry(lambda: Simbad.query_object(target_str))
         if result is None or len(result) == 0:
             raise ValueError(
                 f"Could not resolve '{target_str}'. "
@@ -159,7 +172,7 @@ def query_mast(ra_deg: float, dec_deg: float, radius_arcmin: float,
     """Query MAST for observations near a coordinate."""
     coord = SkyCoord(ra=ra_deg, dec=dec_deg, unit=u.deg, frame="icrs")
     radius = u.Quantity(radius_arcmin, u.arcmin)
-    obs = Observations.query_region(coord, radius=radius)
+    obs = _with_retry(lambda: Observations.query_region(coord, radius=radius))
     if obs is None or len(obs) == 0:
         return pd.DataFrame()
     # Filter to the requested mission
@@ -197,7 +210,7 @@ def query_mast(ra_deg: float, dec_deg: float, radius_arcmin: float,
 def fetch_preview(url: str):
     """Download a JPEG preview image from MAST."""
     try:
-        r = requests.get(url, timeout=10)
+        r = _with_retry(lambda: requests.get(url, timeout=10))
         r.raise_for_status()
         return Image.open(BytesIO(r.content))
     except Exception:
@@ -230,11 +243,11 @@ def get_ephemeris(target_name: str) -> dict | None:
     Returns dict with period, t0_mjd, duration_days, planet_name — or None."""
     try:
         from astroquery.ipac.nexsci.nasa_exoplanet_archive import NasaExoplanetArchive
-        result = NasaExoplanetArchive.query_criteria(
+        result = _with_retry(lambda: NasaExoplanetArchive.query_criteria(
             table="pscomppars",
             select="pl_name,hostname,pl_orbper,pl_tranmid,pl_trandur",
             where=f"hostname like '%{target_name}%'",
-        )
+        ))
         if result is None or len(result) == 0:
             return None
         df = result.to_pandas().dropna(subset=["pl_orbper", "pl_tranmid", "pl_trandur"])
@@ -540,9 +553,12 @@ if run_search:
             tried = ", ".join(f"`{c}`" for c in host_candidates)
             st.caption(f"No exoplanet ephemeris found (tried: {tried}) — showing observation timeline only.")
 
-        fig = build_timeline(target_input.strip(), df_jwst_tl, df_tess_tl, ephem)
-        st.pyplot(fig)
-        plt.close(fig)
+        try:
+            fig = build_timeline(target_input.strip(), df_jwst_tl, df_tess_tl, ephem)
+            st.pyplot(fig)
+            plt.close(fig)
+        except Exception as e:
+            st.warning(f"Could not render timeline: {e}")
 
 else:
     st.info("Enter a target in the sidebar and press **Search** to begin.")
