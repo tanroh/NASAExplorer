@@ -569,4 +569,5 @@ st.caption(
     "Data from [MAST](https://mast.stsci.edu) · "
     "Powered by [astroquery](https://astroquery.readthedocs.io) & "
     "[lightkurve](https://lightkurve.github.io/lightkurve/)"
+    "Developed and deployed by Rohan Tankey, 2026"
 )
