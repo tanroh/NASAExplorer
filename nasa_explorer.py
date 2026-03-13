@@ -59,22 +59,6 @@ with st.sidebar:
 
     run_search = st.button("🔍 Search", use_container_width=True)
 
-    # ── Featured targets ──────────────────────────────────────────────────────
-    st.divider()
-    st.markdown("**Recent targets**")
-    with st.spinner("Loading recent targets…"):
-        recent = fetch_recent_targets(20)
-
-    if recent:
-        # Show as a compact grid of buttons — clicking pre-fills and triggers search
-        cols = st.columns(2)
-        for i, name in enumerate(recent):
-            if cols[i % 2].button(name, key=f"ft_{i}", use_container_width=True):
-                st.session_state.prefill_target = name
-                st.rerun()
-    else:
-        st.caption("Could not load recent targets.")
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 # Solar system bodies astropy can resolve via ephemeris
@@ -358,6 +342,21 @@ def build_timeline(target: str, df_jwst: pd.DataFrame, df_tess: pd.DataFrame,
     fig.tight_layout()
     return fig
 
+
+# ── Featured targets (sidebar, rendered after helpers are defined) ────────────
+with st.sidebar:
+    st.divider()
+    st.markdown("**Recent targets**")
+    with st.spinner("Loading…"):
+        recent = fetch_recent_targets(20)
+    if recent:
+        cols = st.columns(2)
+        for i, name in enumerate(recent):
+            if cols[i % 2].button(name, key=f"ft_{i}", use_container_width=True):
+                st.session_state.prefill_target = name
+                st.rerun()
+    else:
+        st.caption("Could not load recent targets.")
 
 # ── Main app ──────────────────────────────────────────────────────────────────
 
