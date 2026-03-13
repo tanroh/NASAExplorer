@@ -27,10 +27,8 @@ st.title("🔭 NASA Astrophysics Explorer")
 st.caption("Browse JWST and TESS observations via the MAST archive")
 
 # ── Session state — lets featured target buttons pre-fill the search box ─────
-# Using the widget key directly in session_state is the reliable way to set
-# a text_input value programmatically after first render
-if "target_input_box" not in st.session_state:
-    st.session_state.target_input_box = "NGC 628"
+if "prefill_target" not in st.session_state:
+    st.session_state.prefill_target = "NGC 628"
 
 # ── Sidebar controls ─────────────────────────────────────────────────────────
 with st.sidebar:
@@ -38,8 +36,8 @@ with st.sidebar:
 
     target_input = st.text_input(
         "Object name or RA Dec",
+        value=st.session_state.prefill_target,
         help="Examples:  NGC 628  |  M31  |  261.7 -73.5  |  Trappist-1",
-        key="target_input_box",
     )
 
     search_mode = st.radio(
@@ -399,7 +397,7 @@ with st.sidebar:
         cols = st.columns(2)
         for i, name in enumerate(recent):
             if cols[i % 2].button(name, key=f"ft_{i}", use_container_width=True):
-                st.session_state.target_input_box = name
+                st.session_state.prefill_target = name
                 st.rerun()
     else:
         st.caption("Could not load recent targets.")
