@@ -186,6 +186,116 @@ def fetch_lightcurve(target_name: str):
     return search[0].download()
 
 
+@st.cache_data(show_spinner=False)
+def get_ephemeris(target_name: str) -> dict | None:
+    """Query NASA Exoplanet Archive for transit ephemeris.
+    Returns dict with period, t0_mjd, duration_days, planet_name — or None."""
+    try:
+        from astroquery.ipac.nexsci.nasa_exoplanet_archive import NasaExoplanetArchive
+        result = NasaExoplanetArchive.query_criteria(
+            table="pscomppars",
+            select="pl_name,hostname,pl_orbper,pl_tranmid,pl_trandur",
+            where=f"hostname like '%{target_name}%'",
+        )
+        if result is None or len(result) == 0:
+            return None
+        df = result.to_pandas().dropna(subset=["pl_orbper", "pl_tranmid", "pl_trandur"])
+        if df.empty:
+            return None
+        row = df.iloc[0]
+        return {
+            "planet_name": row["pl_name"],
+            "period":      float(row["pl_orbper"]),
+            "t0_mjd":      float(row["pl_tranmid"]) - 2400000.5,  # BJD → MJD
+            "duration":    float(row["pl_trandur"]) / 24.0,        # hours → days
+        }
+    except Exception:
+        return None
+
+
+def build_timeline(target: str, df_jwst: pd.DataFrame, df_tess: pd.DataFrame,
+                   ephem: dict | None):
+    """Render a JWST + TESS observation timeline with optional transit overlays."""
+    import numpy as np
+    import matplotlib.patches as mpatches
+    from astropy.time import Time
+
+    fig, ax = plt.subplots(figsize=(14, 3))
+
+    # Collect all times to set axis range
+    all_times = []
+
+    # ── TESS bands ────────────────────────────────────────────────────────────
+    if not df_tess.empty:
+        tess_valid = df_tess.dropna(subset=["t_min", "t_max"])
+        for _, row in tess_valid.iterrows():
+            ax.axvspan(row["t_min"], row["t_max"],
+                       ymin=0.55, ymax=0.95, color="steelblue", alpha=0.45)
+            all_times += [row["t_min"], row["t_max"]]
+
+    # ── JWST markers ─────────────────────────────────────────────────────────
+    if not df_jwst.empty:
+        jwst_valid = df_jwst.dropna(subset=["t_min"])
+        for _, row in jwst_valid.iterrows():
+            mid = (row["t_min"] + row.get("t_max", row["t_min"])) / 2
+            ax.axvline(mid, ymin=0.05, ymax=0.50,
+                       color="darkorange", linewidth=1.5, alpha=0.85)
+            all_times.append(mid)
+
+    # ── Transit windows ───────────────────────────────────────────────────────
+    if ephem and all_times:
+        window_start = min(all_times) - 30
+        window_end   = max(all_times) + 30
+        T0     = ephem["t0_mjd"]
+        period = ephem["period"]
+        half   = ephem["duration"] / 2
+
+        n_start = int((window_start - T0) / period)
+        n_end   = int((window_end   - T0) / period) + 1
+        centers = T0 + np.arange(n_start, n_end) * period
+        centers = centers[(centers >= window_start) & (centers <= window_end)]
+
+        for tc in centers:
+            ax.axvspan(tc - half, tc + half,
+                       ymin=0.0, ymax=1.0, color="crimson", alpha=0.10, linewidth=0)
+            ax.axvline(tc, color="crimson", linewidth=0.4, alpha=0.35)
+
+    # ── Axes ──────────────────────────────────────────────────────────────────
+    if all_times:
+        margin = 30
+        ax.set_xlim(min(all_times) - margin, max(all_times) + margin)
+
+    # Year tick labels
+    x_min, x_max = ax.get_xlim()
+    year_start = int(Time(x_min, format="mjd").datetime.year)
+    year_end   = int(Time(x_max, format="mjd").datetime.year) + 1
+    year_ticks = {y: Time(f"{y}-01-01").mjd for y in range(year_start, year_end + 1)}
+    ax.set_xticks(list(year_ticks.values()))
+    ax.set_xticklabels(list(year_ticks.keys()))
+    ax.set_yticks([])
+    ax.set_xlabel("Year")
+
+    title = f"{target} — Observation Timeline"
+    if ephem:
+        title += f"  ·  {ephem['planet_name']} transits overlaid"
+    ax.set_title(title)
+
+    # Row labels
+    ax.text(0.005, 0.75, "TESS",  transform=ax.transAxes, fontsize=8, color="steelblue",  va="center")
+    ax.text(0.005, 0.28, "JWST",  transform=ax.transAxes, fontsize=8, color="darkorange", va="center")
+
+    legend = [
+        mpatches.Patch(color="steelblue",  alpha=0.5, label="TESS sector"),
+        mpatches.Patch(color="darkorange", alpha=0.8, label="JWST observation"),
+    ]
+    if ephem:
+        legend.append(mpatches.Patch(color="crimson", alpha=0.25, label=f"{ephem['planet_name']} transit"))
+    ax.legend(handles=legend, loc="upper right", fontsize=8)
+
+    fig.tight_layout()
+    return fig
+
+
 # ── Main app ──────────────────────────────────────────────────────────────────
 
 if run_search:
@@ -200,6 +310,10 @@ if run_search:
     st.success(
         f"**{target_input}** → RA {coord.ra.deg:.4f}°, Dec {coord.dec.deg:.4f}°"
     )
+
+    # Initialise result dataframes so timeline section can always reference them
+    df_jwst = pd.DataFrame()
+    df_tess = pd.DataFrame()
 
     # ── JWST tab ──────────────────────────────────────────────────────────────
     if "JWST" in missions:
@@ -334,6 +448,30 @@ if run_search:
                 "No TESS light curve found via lightkurve for this target name. "
                 "Try an exact catalogue name (e.g. 'TRAPPIST-1' or 'TIC 278683025')."
             )
+
+    # ── Timeline crossmatch ───────────────────────────────────────────────────
+    # Show when both missions are selected and at least one has results
+    df_jwst_tl = df_jwst if "JWST" in missions and not df_jwst.empty else pd.DataFrame()
+    df_tess_tl = df_tess if "TESS" in missions and not df_tess.empty else pd.DataFrame()
+
+    if not df_jwst_tl.empty or not df_tess_tl.empty:
+        st.subheader("📅 Observation Timeline")
+
+        with st.spinner("Checking NASA Exoplanet Archive…"):
+            ephem = get_ephemeris(target_input.strip())
+
+        if ephem:
+            st.caption(
+                f"Found ephemeris for **{ephem['planet_name']}** — "
+                f"period {ephem['period']:.4f} d, "
+                f"transit duration {ephem['duration']*24:.2f} h"
+            )
+        else:
+            st.caption("Target not found in NASA Exoplanet Archive — showing observation timeline only.")
+
+        fig = build_timeline(target_input.strip(), df_jwst_tl, df_tess_tl, ephem)
+        st.pyplot(fig)
+        plt.close(fig)
 
 else:
     st.info("Enter a target in the sidebar and press **Search** to begin.")
