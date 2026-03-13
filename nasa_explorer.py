@@ -244,33 +244,46 @@ if run_search:
                 if shown == 0:
                     st.info("Preview images not available for these observations.")
 
-            # Parse obs_id to extract program and observation number for MAST deep links
-            # obs_id format: jw{program}-o{obs}_t{target}_{instrument}_{filters}_{subarray}
+            # Build MAST deep links using the confirmed URL structure
+            # e.g. jw05924-o015_... → program_id=5924&obs_id=15
             if "obs_id" in df_jwst.columns:
-                import urllib.parse, re
+                import re
                 st.markdown("#### View on MAST")
                 for _, row in df_jwst.head(10).iterrows():
                     oid = row["obs_id"]
                     target = row.get("target_name", "").strip()
                     filters = row.get("filters", "")
-                    # Extract program id (e.g. jw05924 → 5924) and obs number (e.g. o015 → 15)
                     prog_match = re.match(r"jw(\d+)", oid)
                     obs_match  = re.search(r"-o(\d+)", oid)
                     if prog_match and obs_match:
-                        prog_id  = str(int(prog_match.group(1)))  # strip leading zeros
-                        obs_num  = str(int(obs_match.group(1)))
-                        search_url = (
-                            "https://mast.stsci.edu/search/ui/#/jwst?"
-                            + urllib.parse.urlencode({"program": prog_id, "obs_num": obs_num})
+                        prog_id = str(int(prog_match.group(1)))
+                        obs_num = str(int(obs_match.group(1)))
+                        import urllib.parse
+                        target_enc = urllib.parse.quote(target)
+                        results_url = (
+                            "https://mast.stsci.edu/search/ui/#/jwst/results"
+                            "?resolve=true"
+                            "&data_types=spectrum,timeseries,image,other"
+                            "&instruments=MIRI,NIRCAM,NIRSPEC,NIRISS,FGS"
+                            f"&target_name={target_enc}"
+                            f"&program_id={prog_id}"
+                            f"&obs_id={obs_num}"
+                            "&useStore=false"
+                        )
+                        form_url = (
+                            "https://mast.stsci.edu/search/ui/#/jwst"
+                            f"?target_name={target_enc}"
+                            f"&program_id={prog_id}"
+                            f"&obs_id={obs_num}"
                         )
                         st.markdown(
-                            f"- [**{target}**]({search_url}) &nbsp;`{filters}` "
-                            f"&nbsp;Program **{prog_id}** Obs **{obs_num}**"
+                            f"- **{target}** `{filters}` "
+                            f"Program **{prog_id}** Obs **{obs_num}** "
+                            f"→ [Results]({results_url}) · [Search form]({form_url})"
                         )
                     else:
-                        # Fallback: search by target name if obs_id doesn't match expected format
-                        search_url = "https://mast.stsci.edu/search/ui/#/jwst?target=" + urllib.parse.quote(target)
-                        st.markdown(f"- [**{target}**]({search_url}) &nbsp;`{filters}` &nbsp;`{oid}`")
+                        # Fallback for non-standard obs_id formats
+                        st.markdown(f"- **{target}** &nbsp;`{filters}` &nbsp;`{oid}`")
 
     # ── TESS tab ──────────────────────────────────────────────────────────────
     if "TESS" in missions:
