@@ -458,16 +458,39 @@ if run_search:
         st.subheader("📅 Observation Timeline")
 
         with st.spinner("Checking NASA Exoplanet Archive…"):
-            ephem = get_ephemeris(target_input.strip())
+            # Strip trailing planet designations (e.g. "WASP-76 b" → "WASP-76")
+            # and use the MAST target_name as a fallback if it differs from user input
+            host_candidates = set()
+            host_candidates.add(target_input.strip())
+            # Add version with planet letter stripped
+            import re as _re
+            stripped = _re.sub(r"\s+[a-zA-Z]$", "", target_input.strip()).strip()
+            host_candidates.add(stripped)
+            # Also try the most common target_name from MAST results
+            for _df in [df_jwst_tl, df_tess_tl]:
+                if not _df.empty and "target_name" in _df.columns:
+                    top = _df["target_name"].dropna().mode()
+                    if len(top):
+                        host_candidates.add(top.iloc[0].strip())
+
+            ephem = None
+            ephem_query_used = None
+            for candidate in host_candidates:
+                ephem = get_ephemeris(candidate)
+                if ephem:
+                    ephem_query_used = candidate
+                    break
 
         if ephem:
             st.caption(
-                f"Found ephemeris for **{ephem['planet_name']}** — "
+                f"Found ephemeris for **{ephem['planet_name']}** "
+                f"(queried as `{ephem_query_used}`) — "
                 f"period {ephem['period']:.4f} d, "
                 f"transit duration {ephem['duration']*24:.2f} h"
             )
         else:
-            st.caption("Target not found in NASA Exoplanet Archive — showing observation timeline only.")
+            tried = ", ".join(f"`{c}`" for c in host_candidates)
+            st.caption(f"No exoplanet ephemeris found (tried: {tried}) — showing observation timeline only.")
 
         fig = build_timeline(target_input.strip(), df_jwst_tl, df_tess_tl, ephem)
         st.pyplot(fig)
